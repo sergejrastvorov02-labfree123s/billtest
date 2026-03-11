@@ -1,0 +1,221 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ServiceStatus {
+  pending
+  provisioning
+  active
+  suspended
+  expired
+  canceled
+  failed
+}
+
+enum InvoiceStatus { draft pending paid overdue void refunded }
+enum PaymentStatus { pending succeeded failed canceled refunded }
+enum TicketStatus { open in_progress waiting_user resolved closed }
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  locale         String   @default("en")
+  currencyCode   String   @default("USD")
+  isBlocked      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  sessions       Session[]
+  socialAccounts UserSocialAccount[]
+  balance        UserBalance?
+  services       Service[]
+  orders         Order[]
+  invoices       Invoice[]
+  tickets        Ticket[]
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model UserSocialAccount {
+  id          String @id @default(cuid())
+  userId      String
+  provider    String
+  providerUid String
+  username    String?
+  avatarUrl   String?
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerUid])
+  @@index([userId])
+}
+
+model Currency {
+  code     String @id
+  name     String
+  symbol   String
+  isActive Boolean @default(true)
+}
+
+model ExchangeRate {
+  id        String   @id @default(cuid())
+  baseCode  String
+  quoteCode String
+  rate      Decimal  @db.Decimal(18, 8)
+  updatedAt DateTime @updatedAt
+  @@unique([baseCode, quoteCode])
+}
+
+model ProductPlan {
+  id          String @id @default(cuid())
+  productType String
+  name        String
+  cpu         Int
+  ramMb       Int
+  diskMb      Int
+  slots       Int?
+  isActive    Boolean @default(true)
+  prices      PlanPrice[]
+}
+
+model PlanPrice {
+  id         String   @id @default(cuid())
+  planId      String
+  currencyCode String
+  periodDays Int
+  amount     Decimal @db.Decimal(12,2)
+  plan       ProductPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  @@unique([planId, currencyCode, periodDays])
+}
+
+model Service {
+  id             String @id @default(cuid())
+  userId         String
+  planId         String
+  status         ServiceStatus @default(pending)
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  autoRenew      Boolean @default(true)
+  createdAt      DateTime @default(now())
+  user           User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan           ProductPlan @relation(fields: [planId], references: [id])
+  providerLink   ServiceProviderLink?
+}
+
+model ServiceProviderLink {
+  id               String @id @default(cuid())
+  serviceId         String @unique
+  providerType      String
+  externalResourceId String
+  payload           Json
+  service           Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+}
+
+model ProvisioningJob {
+  id          String   @id @default(cuid())
+  serviceId   String
+  action      String
+  status      String
+  attempts    Int      @default(0)
+  lastError   String?
+  createdAt   DateTime @default(now())
+}
+
+model ProviderEvent {
+  id            String   @id @default(cuid())
+  serviceId      String?
+  providerType   String
+  eventType      String
+  externalId     String?
+  requestPayload Json?
+  responsePayload Json?
+  isError        Boolean @default(false)
+  createdAt      DateTime @default(now())
+}
+
+model UserBalance {
+  userId   String @id
+  amount   Decimal @default(0) @db.Decimal(14,2)
+  user     User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledger   BalanceLedger[]
+}
+
+model BalanceLedger {
+  id            String @id @default(cuid())
+  userId        String
+  delta         Decimal @db.Decimal(14,2)
+  currencyCode  String
+  reason        String
+  referenceType String?
+  referenceId   String?
+  createdAt     DateTime @default(now())
+  balance       UserBalance @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  @@index([userId, createdAt])
+}
+
+model Order {
+  id         String @id @default(cuid())
+  userId      String
+  status      String
+  totalAmount Decimal @db.Decimal(12,2)
+  currencyCode String
+  createdAt   DateTime @default(now())
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id          String @id @default(cuid())
+  userId      String
+  orderId     String?
+  status      InvoiceStatus @default(pending)
+  totalAmount Decimal @db.Decimal(12,2)
+  currencyCode String
+  dueAt       DateTime
+  createdAt   DateTime @default(now())
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Payment {
+  id            String @id @default(cuid())
+  invoiceId      String
+  providerCode   String
+  providerPaymentId String?
+  amount         Decimal @db.Decimal(12,2)
+  currencyCode   String
+  status         PaymentStatus @default(pending)
+  createdAt      DateTime @default(now())
+}
+
+model Ticket {
+  id         String @id @default(cuid())
+  userId     String
+  subject    String
+  status     TicketStatus @default(open)
+  priority   String @default("normal")
+  createdAt  DateTime @default(now())
+  user       User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages   TicketMessage[]
+}
+
+model TicketMessage {
+  id         String @id @default(cuid())
+  ticketId   String
+  authorId   String
+  body       String
+  isInternal Boolean @default(false)
+  createdAt  DateTime @default(now())
+  ticket     Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+}
